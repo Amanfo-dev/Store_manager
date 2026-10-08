@@ -1,8 +1,6 @@
 # Store Manager
 
-A small web app for running a shop: keep track of items and stock, ring up sales from a cart, log expenses, and see how the day, month and year are going. Built because paper ledgers and loose WhatsApp notes stop working the moment a second person helps in the shop.
-
-Flask + SQLite on your laptop, Postgres when it's deployed. The frontend is plain HTML, CSS and a bit of JavaScript, no build step.
+A small web app for running a shop: keep track of items and stock, ring up sales from a cart, log expenses, and see how the day, month and year are going.
 
 ## What it does
 
@@ -50,28 +48,6 @@ Two things worth knowing while developing:
 - Sign-up checks that the email's domain can actually receive mail (a DNS lookup), so you need an internet connection. Set `CHECK_EMAIL_DNS=0` to turn that off when you're offline.
 - If you change the models later, delete `instance/store.db` and start again. There are no migrations yet.
 
-## Deploying to Railway
-
-1. Push this folder to a GitHub repo.
-2. On [Railway](https://railway.app), create a new project and choose **Deploy from GitHub repo**.
-3. In the same project, add a **PostgreSQL** database (New > Database > PostgreSQL).
-4. Open your app service > **Variables** and add:
-   - `SECRET_KEY`: any long random string. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`.
-   - `DATABASE_URL`: reference the Postgres service's `DATABASE_URL` variable.
-5. Railway reads the `Procfile` and starts the app with gunicorn. Under **Settings > Networking**, click **Generate Domain**.
-6. Open the domain and create the admin account. Do this right away, because whoever gets there first becomes the admin.
-
-Tables are created automatically on first start.
-
-### Environment variables
-
-| Variable | Required | What it does |
-|---|---|---|
-| `SECRET_KEY` | yes in production | Signs login sessions. Never commit it. |
-| `DATABASE_URL` | yes in production | Postgres connection string. Falls back to local SQLite. |
-| `CHECK_EMAIL_DNS` | no | `0` skips the mail-domain check on sign-up. Default `1`. |
-
-Currency and the app name are set at the top of `app.py` (`CURRENCY`, `CURRENCY_CODE`, `APP_NAME`).
 
 ## Project layout
 
