@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Price history{% endblock %}
+{% block content %}
+<h1>Price history</h1>
+{% if changes %}
+<table>
+  <thead><tr><th>Date</th><th>Time</th><th>Item</th><th class="num">Old price</th><th class="num">New price</th><th>Change</th></tr></thead>
+  <tbody>{% for c in changes %}
+  <tr><td data-label="Date">{{ c.changed_at.strftime('%d %b %Y') }}</td><td data-label="Time">{{ c.changed_at.strftime('%H:%M') }}</td>
+  <td data-label="Item"><strong>{{ c.item.name }}</strong></td>
+  <td data-label="Old price" class="num">{{ currency }} {{ c.old_price|money }}</td><td data-label="New price" class="num">{{ currency }} {{ c.new_price|money }}</td>
+  <td data-label="Change"><span class="sticker {{ 'up' if c.difference > 0 else 'down' }}">{{ '▲' if c.difference > 0 else '▼' }} {{ c.difference|abs|money }}</span></td></tr>
+  {% endfor %}</tbody>
+</table>
+{% else %}<p class="empty">No price changes yet. They appear here when you edit an item's price.</p>{% endif %}
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Records{% endblock %}
+{% block content %}
+<h1>Records</h1>
+<form class="filterbar" method="get">
+  <label>From<input type="date" name="date_from" value="{{ f.get('date_from','') }}"></label>
+  <label>To<input type="date" name="date_to" value="{{ f.get('date_to','') }}"></label>
+  <label>Min amount<input type="number" step="0.01" min="0" name="min" value="{{ f.get('min','') }}"></label>
+  <label>Max amount<input type="number" step="0.01" min="0" name="max" value="{{ f.get('max','') }}"></label>
+  <label>Type<select name="type">
+    {% for v, l in [('all','All'),('invoice','Sales (invoices)'),('expense','Expenses')] %}<option value="{{ v }}" {{ 'selected' if f.get('type','all')==v }}>{{ l }}</option>{% endfor %}
+  </select></label>
+  <button class="btn">Filter</button><a class="btn ghost" href="{{ url_for('records') }}">Reset</a>
+</form>
+{% if rows %}
+<table>
+  <thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Description</th><th class="num">Amount</th></tr></thead>
+  <tbody>{% for r in rows %}
+  <tr>
+    <td data-label="Date">{{ r.at.strftime('%d %b %Y') }}</td><td data-label="Time">{{ r.at.strftime('%H:%M') }}</td>
+    {% if r.kind == 'invoice' %}{% set inv = r.inv %}
+    <td data-label="Type">Invoice</td>
+    <td data-label="Description"><details class="inv"><summary><strong>{{ inv.number }}</strong> · {{ inv.sales|length }} item{{ 's' if inv.sales|length != 1 }}</summary>
+      <ul>{% for s in inv.sales %}<li>{{ s.item_name }} × {{ s.quantity }} <span class="mute">at {{ currency }} {{ s.unit_price|money }}</span> <b>{{ currency }} {{ s.total|money }}</b></li>{% endfor %}</ul>
+      <div class="row"><a class="btn small" href="{{ url_for('invoice_print', invoice_id=inv.id) }}" target="_blank" rel="noopener">Print</a>
+      <a class="btn small ghost" href="{{ url_for('invoice_pdf', invoice_id=inv.id) }}">Save as PDF</a></div></details></td>
+    <td data-label="Amount" class="num pos">{{ currency }} {{ r.amount|money }}</td>
+    {% else %}
+    <td data-label="Type">Expense</td><td data-label="Description">{{ r.desc }}</td>
+    <td data-label="Amount" class="num neg">−{{ currency }} {{ r.amount|money }}</td>
+    {% endif %}
+  </tr>{% endfor %}</tbody>
+</table>
+{% else %}<p class="empty">No records match. Sales appear here as invoices once you check out a cart on Home.</p>{% endif %}
+{% endblock %}

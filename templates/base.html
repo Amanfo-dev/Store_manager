@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} | {{ app_name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gabarito:wght@500;700;800&family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<script>try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="{{ url_for('index') }}">{{ app_name }}</a>
+  <div class="bar-actions">
+    <label for="theme" class="sr">Theme</label>
+    <select id="theme"><option value="system">System theme</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    {% if g.user %}
+    {% if can('settings') %}<a href="{{ url_for('settings') }}">Settings</a>{% endif %}
+    <a href="{{ url_for('account') }}">Account</a>
+    <form method="post" action="{{ url_for('logout') }}" class="inline"><button class="linkbtn">Log out</button></form>
+    {% endif %}
+  </div>
+</header>
+{% if g.user %}
+<nav class="tabs" aria-label="Main">
+  {% for ep, label, show in [('index','Home',true),('add_page','Add item',can('add_item')),('history','Price history',true),('records','Records',true),('analytics','Analytics',can('analytics'))] %}
+  {% if show %}<a href="{{ url_for(ep) }}"{% if request.endpoint == ep %} aria-current="page"{% endif %}>{{ label }}</a>{% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+<main>
+  {% for cat, msg in get_flashed_messages(with_categories=true) %}<p class="flash {{ cat }}" role="status">{{ msg }}</p>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

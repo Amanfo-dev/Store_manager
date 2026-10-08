@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Add item{% endblock %}
+{% block content %}
+<h1>Add item</h1>
+<form class="stack" method="post" action="{{ url_for('add_item') }}">
+  <label>Item name<input name="name" required autofocus></label>
+  <label>Price ({{ currency }})<input name="price" type="number" step="0.01" min="0" required></label>
+  <label>Number in stock<input name="stock" type="number" min="0" value="0" required></label>
+  <button class="btn">Add item</button>
+</form>
+{% endblock %}

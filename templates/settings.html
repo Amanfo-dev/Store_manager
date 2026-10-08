@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<h2>Roles</h2>
+<div class="seg" role="tablist">
+  {% for r in ['manager','employee'] %}<a href="{{ url_for('settings', role=r) }}" {% if r==role %}aria-current="true"{% endif %}>{{ r|capitalize }}</a>{% endfor %}
+</div>
+<form class="stack perms" method="post" action="{{ url_for('save_privileges') }}">
+  <input type="hidden" name="role" value="{{ role }}">
+  <p class="mute">What a {{ role }} can do. Anything not listed is open to everyone. Admins can always do everything.</p>
+  {% for key, label in perms.items() %}
+  <label class="check"><input type="checkbox" name="perm" value="{{ key }}" {{ 'checked' if enabled.get(key) }} {{ 'disabled' if not can('change_privileges') }}> {{ label }}</label>
+  {% endfor %}
+  {% if can('change_privileges') %}<button class="btn">Save privileges</button>{% else %}<p class="mute">You can view these but not change them.</p>{% endif %}
+</form>
+{% if can('change_roles') %}
+<h2>Change role</h2>
+<form class="stack" method="post" action="{{ url_for('change_role') }}">
+  <label>Email of the person<input type="email" name="email" required></label>
+  <label>New role<select name="role">{% if g.user.role == 'admin' %}<option value="admin">Admin</option>{% endif %}<option value="manager">Manager</option><option value="employee">Employee</option></select></label>
+  <button class="btn">Change role</button>
+  <p class="mute">{{ 'Admins can change employees and managers.' if g.user.role == 'admin' else 'Managers can change the role of employees only.' }}</p>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<h1>Account</h1>
+<p><strong>{{ g.user.full_name }}</strong><br>{{ g.user.email }}<br>Role: <span class="sticker">{{ g.user.role|capitalize }}</span></p>
+{% if g.user.role == 'admin' %}
+<h2>Add role users</h2>
+<form class="stack" method="post" action="{{ url_for('add_role_user') }}">
+  <label>First name<input name="first_name" required></label>
+  <label>Last name<input name="last_name" required></label>
+  <label>Email<input type="email" name="email" required></label>
+  <label>Password (8+ characters)<input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+  <label>Role<select name="role"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></select></label>
+  <button class="btn">Create account</button>
+</form>
+<h2>People</h2>
+<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th><span class="sr">Remove</span></th></tr></thead><tbody>
+{% for u in users %}<tr><td data-label="Name">{{ u.full_name }}</td><td data-label="Email">{{ u.email }}</td><td data-label="Role">{{ u.role|capitalize }}</td>
+<td class="actions">{% if u.role != 'admin' %}<form method="post" action="{{ url_for('remove_user', user_id=u.id) }}" data-confirm="Remove {{ u.email }}?"><button class="btn small danger">Remove</button></form>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+{% endblock %}

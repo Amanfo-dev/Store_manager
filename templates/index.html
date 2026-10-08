@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<section class="tally" aria-label="Today">
+  <div><span>Revenue today</span><b>{{ currency }} {{ totals.revenue|money }}</b></div>
+  <i aria-hidden="true">−</i>
+  <div><span>Expenses today</span><b>{{ currency }} {{ totals.expenses|money }}</b></div>
+  <i aria-hidden="true">=</i>
+  <div class="net {{ 'neg' if totals.net < 0 }}"><span>Left in the till</span><b>{{ currency }} {{ totals.net|money }}</b></div>
+  <button class="btn ghost" data-open="dlg-expense">Record expense</button>
+</section>
+
+<form class="tools" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search items" aria-label="Search items">
+  <select name="sort" aria-label="Sort items">
+    <option value="name" {{ 'selected' if sort=='name' }}>Name A–Z</option>
+    <option value="stock" {{ 'selected' if sort=='stock' }}>Fewest in stock</option>
+    <option value="price" {{ 'selected' if sort=='price' }}>Lowest price</option>
+  </select>
+  <button class="btn">Apply</button>
+</form>
+
+{% if items %}
+<table>
+  <thead><tr><th>No.</th><th>Item</th><th class="num">Price</th><th class="num">In stock</th><th>Last price change</th><th><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {% for i in items %}{% set c = i.latest_price_change %}
+  <tr>
+    <td data-label="No.">{{ i.id }}</td>
+    <td data-label="Item"><strong>{{ i.name }}</strong></td>
+    <td data-label="Price" class="num">{{ currency }} {{ i.price|money }}</td>
+    <td data-label="In stock" class="num">{{ i.stock }}</td>
+    <td data-label="Last change">{% if c %}<span class="sticker {{ 'up' if c.difference > 0 else 'down' }}" title="{{ c.changed_at.strftime('%d %b %Y, %H:%M') }}">{{ '▲' if c.difference > 0 else '▼' }} {{ c.difference|abs|money }}</span>{% else %}<span class="mute">None yet</span>{% endif %}</td>
+    <td class="actions">
+      <button class="btn small" data-open="dlg-add" data-id="{{ i.id }}" data-name="{{ i.name }}" data-price="{{ i.price }}" data-stock="{{ i.stock }}" {{ 'disabled' if i.stock < 1 }}>Add</button>
+      {% if can('edit_delete') %}
+      <button class="btn small ghost" data-open="dlg-edit" data-id="{{ i.id }}" data-name="{{ i.name }}" data-price="{{ i.price }}" data-stock="{{ i.stock }}">Edit</button>
+      <form method="post" action="{{ url_for('delete_item', item_id=i.id) }}" data-confirm="Delete {{ i.name }}? Its price history goes too."><button class="btn small danger">Delete</button></form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">{% if q %}No items match “{{ q }}”.{% elif can('add_item') %}No items yet. <a href="{{ url_for('add_page') }}">Add your first item</a>.{% else %}No items yet. Ask a manager or admin to add some.{% endif %}</p>
+{% endif %}
+
+<button id="cart-fab" class="fab" aria-label="Open cart" data-currency="{{ currency }}" data-checkout="{{ url_for('checkout') }}">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 11.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5L21 7H6"/></svg>
+  <span id="cart-count" class="badge" hidden>0</span>
+</button>
+
+<dialog id="dlg-cart"><div class="cart"><h2>Cart</h2>
+  <div id="cart-lines"></div>
+  <p class="cart-total">Total <b id="cart-sum"></b></p>
+  <p id="cart-msg" class="flash error" hidden></p>
+  <div class="row"><button class="btn" id="cart-checkout">Checkout</button><button class="btn ghost" id="cart-close">Close</button></div></div></dialog>
+
+<dialog id="dlg-add"><form><h2>Add <span data-fill="name"></span></h2>
+  <label>How many?<input name="quantity" type="number" min="1" value="1" required></label>
+  <div class="row"><button class="btn">Add to cart</button><button class="btn ghost" type="button" data-close>Cancel</button></div></form></dialog>
+
+<dialog id="dlg-edit"><form method="post" data-action="/items/{id}/edit"><h2>Edit item</h2>
+  <label>Name<input name="name" required></label>
+  <label>Price<input name="price" type="number" step="0.01" min="0" required></label>
+  <label>In stock<input name="stock" type="number" min="0" required></label>
+  <div class="row"><button class="btn">Save changes</button><button class="btn ghost" type="button" data-close>Cancel</button></div></form></dialog>
+
+<dialog id="dlg-expense"><form method="post" action="{{ url_for('record_expense') }}"><h2>Record expense</h2>
+  <label>What was it for<input name="description" required></label>
+  <label>Amount<input name="amount" type="number" step="0.01" min="0.01" required></label>
+  <div class="row"><button class="btn">Save expense</button><button class="btn ghost" type="button" data-close>Cancel</button></div></form></dialog>
+{% endblock %}
