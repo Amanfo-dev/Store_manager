@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Sign up' if signup else 'Log in' }}{% endblock %}
 {% block content %}
-<h1>{{ 'Create the admin account' if signup else 'Log in' }}</h1>
-{% if signup %}<p class="mute">This is the first account, so it becomes the admin. After that, sign-up closes and the admin creates everyone else.</p>{% endif %}
+{% if signup and closed %}
+<h1>Sign up</h1>
+<p>Sign-up is only for the shop owner. If you work here, your admin creates your account under <strong>Account</strong>, then <strong>Add role users</strong>. Ask them for your email and password.</p>
+<p><a href="{{ url_for('login') }}">Back to log in</a></p>
+{% else %}
+<h1>{{ 'Create an admin account' if signup else 'Log in' }}</h1>
+{% if signup %}<p class="mute">Sign-up is for the shop owner and makes an admin account. We email a 6-digit code to confirm the address. Staff accounts are created by the admin under Account.</p>{% endif %}
 <form class="stack" method="post">
   {% if signup %}
   <label>First name<input name="first_name" required autocomplete="given-name"></label>
@@ -11,7 +16,9 @@
   <label>Email<input name="email" type="email" required autocomplete="email" value="{{ email }}"></label>
   <label>Password<input name="password" type="password" required {% if signup %}minlength="8"{% endif %} autocomplete="{{ 'new-password' if signup else 'current-password' }}"></label>
   {% if signup %}<label>Confirm password<input name="confirm" type="password" required minlength="8" autocomplete="new-password"></label>{% endif %}
-  <button class="btn">{{ 'Create account' if signup else 'Log in' }}</button>
+  <button class="btn">{{ 'Send me a code' if signup else 'Log in' }}</button>
 </form>
-{% if not signup and can_signup %}<p><a href="{{ url_for('signup') }}">First time here? Create the admin account.</a></p>{% endif %}
+{% if signup %}<p><a href="{{ url_for('login') }}">Already have an account? Log in</a></p>
+{% else %}<p>Shop owner and don't have an account yet? <a href="{{ url_for('signup') }}">Sign up</a></p>{% endif %}
+{% endif %}
 {% endblock %}

@@ -1,5 +1,9 @@
 import calendar
+import json
 import os
+import secrets
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from functools import wraps
@@ -8,17 +12,31 @@ from email_validator import EmailNotValidError, validate_email
 from flask import (Flask, abort, flash, g, jsonify, make_response, redirect,
                    render_template, request, session, url_for)
 from fpdf import FPDF
-from sqlalchemy import func
+from sqlalchemy import func, text
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from models import (Expense, Invoice, Item, PriceHistory, RolePermission, Sale,
-                    User, db)
+from models import (Expense, Invoice, Item, PendingSignup, PriceHistory,
+                    RolePermission, Sale, User, db)
 
 
 def database_url():
+    """Postgres when DATABASE_URL is set (the live host), SQLite file otherwise."""
     url = os.environ.get("DATABASE_URL", "sqlite:///store.db")
-    # Railway/Heroku style URLs start with postgres://, SQLAlchemy wants postgresql://
-    return url.replace("postgres://", "postgresql://", 1)
+    # Hosts give postgres:// or postgresql://. Name the driver explicitly, because
+    # newer SQLAlchemy picks psycopg (v3) for a bare postgresql:// URL, not psycopg2.
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg2://" + url[len(prefix):]
+    return url
+
+
+IS_PRODUCTION = bool(os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
+                     or os.environ.get("PRODUCTION"))
+if IS_PRODUCTION:
+    # A free host's disk is wiped on every restart, so SQLite there would lose all data.
+    for _name in ("SECRET_KEY", "DATABASE_URL"):
+        if not os.environ.get(_name):
+            raise RuntimeError(f"Set the {_name} environment variable on your host before deploying.")
 
 
 app = Flask(__name__)
@@ -30,7 +48,9 @@ app.config.update(
     SQLALCHEMY_DATABASE_URI=database_url(),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT")),
+    SESSION_COOKIE_SECURE=IS_PRODUCTION,
+    SQLALCHEMY_ENGINE_OPTIONS={"pool_pre_ping": True, "pool_recycle": 280},
+    MAIL_FROM=os.environ.get("MAIL_FROM") or "Store Manager <onboarding@resend.dev>",
     CHECK_EMAIL_DNS=os.environ.get("CHECK_EMAIL_DNS", "1") == "1",
 )
 db.init_app(app)
@@ -58,14 +78,27 @@ def seed_permissions():
     db.session.commit()
 
 
-with app.app_context():
-    db.create_all()
-    seed_permissions()
+def init_db():
+    """Create tables and seed privileges. A Postgres advisory lock makes this safe when
+    several workers (or app copies) start at the same moment. It is a transaction-level
+    lock, so it also works through a pooled connection such as Neon's."""
+    with app.app_context():
+        with db.engine.begin() as lock_conn:  # the lock lives as long as this transaction
+            if lock_conn.dialect.name == "postgresql":
+                lock_conn.execute(text("SELECT pg_advisory_xact_lock(727274)"))
+            db.create_all()
+            seed_permissions()
+        # With gunicorn --preload this runs once before workers fork, so drop the
+        # connections made here and let each worker open its own.
+        db.engine.dispose()
+
+
+init_db()
 
 
 # ---------- auth and permissions ----------
 
-PUBLIC = {"login", "signup", "static"}
+PUBLIC = {"login", "signup", "signup_verify", "signup_resend", "health", "static"}
 
 
 @app.before_request
@@ -125,7 +158,7 @@ def money(value):
 
 def clean_email(raw):
     try:
-        found = validate_email(raw.strip(), check_deliverability=app.config["CHECK_EMAIL_DNS"])
+        found = validate_email(raw.strip(), check_deliverability=app.config["CHECK_EMAIL_DNS"], timeout=5)
     except EmailNotValidError as e:
         raise ValueError(f"That email can't be used: {e}")
     return found.normalized.lower()
@@ -149,29 +182,179 @@ def make_user(email, first, last, password, role):
     return user
 
 
+# ---------- sign-up with an emailed code ----------
+
+RESEND_URL = "https://api.resend.com/emails"
+CODE_MINUTES, MAX_CODE_TRIES, RESEND_WAIT = 15, 5, 60
+
+
+class MailError(Exception):
+    pass
+
+
+def send_email(to, subject, text):
+    """Send through Resend's HTTPS API (Railway's cheaper plans block SMTP).
+    With no RESEND_API_KEY, local runs print the email to the terminal instead."""
+    key = os.environ.get("RESEND_API_KEY")
+    if not key:
+        if IS_PRODUCTION:
+            raise MailError("Email isn't set up on this server yet. Add RESEND_API_KEY on your host.")
+        print(f"\n[dev mail, no RESEND_API_KEY] To: {to}\n{subject}\n{text}\n", flush=True)
+        return
+    payload = json.dumps({
+        "from": app.config["MAIL_FROM"],
+        "to": [to], "subject": subject, "text": text,
+    }).encode()
+    req = urllib.request.Request(RESEND_URL, data=payload, method="POST", headers={
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json",
+        "User-Agent": "store-manager/1.0"})
+    try:
+        urllib.request.urlopen(req, timeout=10).close()
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("message", "")
+        except Exception:
+            detail = ""
+        app.logger.error("Resend refused the email (%s): %s", e.code, detail)
+        raise MailError(f"The email service refused to send the code. {detail}".strip())
+    except (urllib.error.URLError, OSError):
+        raise MailError("Couldn't reach the email service. Try again in a minute.")
+
+
+def issue_code(pending):
+    code = f"{secrets.randbelow(10**6):06d}"
+    now = datetime.now()
+    pending.code_hash = generate_password_hash(code)
+    pending.expires_at = now + timedelta(minutes=CODE_MINUTES)
+    pending.sent_at, pending.attempts = now, 0
+    return code
+
+
+def mail_code(email, code):
+    send_email(email, "Your Store Manager sign-up code",
+               f"Your sign-up code is {code}\n\nIt works for {CODE_MINUTES} minutes. "
+               "If you didn't try to create an account, ignore this email.")
+
+
+CLOSED_MESSAGE = ("Sign-up is only for the shop owner. Staff accounts are created by your admin "
+                  "under Account, then Add role users.")
+
+
+def owner_emails():
+    return {e.strip().lower() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()}
+
+
+def signup_open():
+    """Sign-up makes admin accounts only. It is open on a brand-new install, or to
+    the owner emails listed in ADMIN_EMAIL (so an owner can always get back in)."""
+    return User.query.count() == 0 or bool(owner_emails())
+
+
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
-    if User.query.count():
-        flash("Sign-up is closed. Ask your admin to create an account for you.", "error")
-        return redirect(url_for("login"))
+    if g.user:
+        return redirect(url_for("index"))
     email = ""
     if request.method == "POST":
         f = request.form
         email = f.get("email", "")
-        if f.get("password") != f.get("confirm"):
-            flash("The two passwords don't match.", "error")
+        try:
+            if f.get("password") != f.get("confirm"):
+                raise ValueError("The two passwords don't match.")
+            clean = clean_email(email)
+            first, last = f.get("first_name", "").strip(), f.get("last_name", "").strip()
+            if not first or not last:
+                raise ValueError("Enter a first and last name.")
+            if len(f.get("password", "")) < 8:
+                raise ValueError("The password must be at least 8 characters.")
+            owners = owner_emails()
+            if owners and clean not in owners:
+                raise ValueError("Only the owner's email address can create an admin account.")
+            if not signup_open():
+                raise ValueError(CLOSED_MESSAGE)
+            if User.query.filter_by(email=clean).first():
+                raise ValueError("That email already has an account. Log in instead.")
+            pending = PendingSignup.query.filter_by(email=clean).first() or PendingSignup(email=clean)
+            pending.first_name, pending.last_name = first, last
+            pending.password_hash = generate_password_hash(f["password"])
+            mail_code(clean, issue_code(pending))
+        except (ValueError, MailError) as e:
+            db.session.rollback()
+            flash(str(e), "error")
         else:
-            try:
-                user = make_user(email, f.get("first_name", ""), f.get("last_name", ""),
-                                 f.get("password", ""), "admin")
-            except ValueError as e:
-                flash(str(e), "error")
-            else:
-                session.clear()
-                session["uid"] = user.id
-                flash("Admin account created. Welcome!", "success")
-                return redirect(url_for("index"))
-    return render_template("auth.html", signup=True, email=email)
+            db.session.add(pending)
+            db.session.commit()
+            session.clear()
+            session["pending_email"] = clean
+            return redirect(url_for("signup_verify"))
+    return render_template("auth.html", signup=True, email=email, closed=not signup_open())
+
+
+def current_pending():
+    email = session.get("pending_email")
+    return PendingSignup.query.filter_by(email=email).first() if email else None
+
+
+@app.route("/signup/verify", methods=["GET", "POST"])
+def signup_verify():
+    if g.user:
+        return redirect(url_for("index"))
+    pending = current_pending()
+    if pending is None:
+        flash("Start the sign-up again.", "error")
+        return redirect(url_for("signup"))
+    if request.method == "POST":
+        if pending.expires_at < datetime.now():
+            db.session.delete(pending)
+            db.session.commit()
+            flash("That code expired. Sign up again to get a new one.", "error")
+            return redirect(url_for("signup"))
+        pending.attempts += 1
+        if check_password_hash(pending.code_hash, request.form.get("code", "").strip()):
+            if User.query.filter_by(email=pending.email).first() or not signup_open():
+                db.session.delete(pending)
+                db.session.commit()
+                flash("That email already has an account, or sign-up has closed. Try logging in.", "error")
+                return redirect(url_for("login"))
+            user = User(email=pending.email, first_name=pending.first_name, last_name=pending.last_name,
+                        password_hash=pending.password_hash, role="admin")
+            db.session.add(user)
+            db.session.delete(pending)
+            db.session.commit()
+            session.clear()
+            session["uid"] = user.id
+            flash("Email confirmed. Admin account created. Welcome!", "success")
+            return redirect(url_for("index"))
+        if pending.attempts >= MAX_CODE_TRIES:
+            db.session.delete(pending)
+            db.session.commit()
+            flash("Too many wrong codes. Sign up again to get a new one.", "error")
+            return redirect(url_for("signup"))
+        left = MAX_CODE_TRIES - pending.attempts
+        db.session.commit()
+        flash(f"That code isn't right. {left} {'try' if left == 1 else 'tries'} left.", "error")
+    return render_template("verify.html", email=pending.email,
+                           dev_mail=not os.environ.get("RESEND_API_KEY") and not IS_PRODUCTION)
+
+
+@app.post("/signup/resend")
+def signup_resend():
+    pending = current_pending()
+    if pending is None:
+        return redirect(url_for("signup"))
+    wait = RESEND_WAIT - (datetime.now() - pending.sent_at).total_seconds()
+    if wait > 0:
+        flash(f"Wait {int(wait) + 1} seconds before asking for another code.", "error")
+    else:
+        try:
+            mail_code(pending.email, issue_code(pending))
+        except MailError as e:
+            db.session.rollback()
+            flash(str(e), "error")
+        else:
+            db.session.commit()
+            flash("A new code is on its way.", "success")
+    return redirect(url_for("signup_verify"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -189,14 +372,29 @@ def login():
             nxt = request.args.get("next", "")
             return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("index"))
         flash("Wrong email or password.", "error")
-    return render_template("auth.html", signup=False, email=email,
-                           can_signup=User.query.count() == 0)
+    return render_template("auth.html", signup=False, email=email)
 
 
 @app.post("/logout")
 def logout():
     session.clear()
+    flash("You've been logged out.", "success")
     return redirect(url_for("login"))
+
+
+@app.after_request
+def no_cache_for_signed_in_pages(resp):
+    # So the Back button after logging out can't show a cached page.
+    if g.get("user"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/health")
+def health():
+    # Deliberately does not touch the database, so an uptime pinger can keep the app
+    # awake without keeping a free database awake too.
+    return "ok"
 
 
 # ---------- helpers ----------
@@ -516,6 +714,25 @@ def change_role():
 def account():
     users = User.query.order_by(User.role, User.first_name).all() if g.user.role == "admin" else []
     return render_template("account.html", users=users)
+
+
+@app.post("/account/password")
+def change_password():
+    f = request.form
+    current, new = f.get("current", ""), f.get("new", "")
+    if not check_password_hash(g.user.password_hash, current):
+        flash("Your current password is wrong.", "error")
+    elif len(new) < 8:
+        flash("The new password must be at least 8 characters.", "error")
+    elif new != f.get("confirm"):
+        flash("The two new passwords don't match.", "error")
+    elif new == current:
+        flash("Pick a password different from the current one.", "error")
+    else:
+        g.user.password_hash = generate_password_hash(new)
+        db.session.commit()
+        flash("Password changed.", "success")
+    return redirect(url_for("account"))
 
 
 @app.post("/account/users")

@@ -64,6 +64,8 @@ class Expense(db.Model):
 
 
 class User(db.Model):
+    # Never reuse ids on SQLite, so a removed user's old login cookie can't match a new account.
+    __table_args__ = {"sqlite_autoincrement": True}
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
     first_name = db.Column(db.String(80), nullable=False)
@@ -97,3 +99,17 @@ class Invoice(db.Model):
     @property
     def total(self):
         return sum(s.total for s in self.sales)
+
+
+class PendingSignup(db.Model):
+    """An admin sign-up waiting for its emailed code. The real User row is only
+    created once the code is right, so a failed email can never lock sign-up."""
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    first_name = db.Column(db.String(80), nullable=False)
+    last_name = db.Column(db.String(80), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    code_hash = db.Column(db.String(255), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    sent_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
