@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Confirm email{% endblock %}
+{% block content %}
+<h1>Check your email</h1>
+<p>We sent a 6-digit code to <strong>{{ email }}</strong>. It works for 15 minutes.</p>
+{% if dev_mail %}<p class="mute">No email service is set up on this machine, so the code was printed in the terminal running the app.</p>{% endif %}
+<form class="stack" method="post">
+  <label>Code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus></label>
+  <button class="btn">Confirm and create the admin account</button>
+</form>
+<form method="post" action="{{ url_for('signup_resend') }}"><p><button class="textbtn">Send a new code</button></p></form>
+<p><a href="{{ url_for('signup') }}">Use a different email</a></p>
+{% endblock %}

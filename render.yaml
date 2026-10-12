@@ -1,0 +1,19 @@
+# Render Blueprint: describes the web service so Render can set it up from this repo.
+# The database lives on Neon (free, does not expire), not on Render.
+services:
+  - type: web
+    name: store-manager
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --preload --workers 2 --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
