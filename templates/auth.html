@@ -3,7 +3,8 @@
 {% block content %}
 {% if signup and closed %}
 <h1>Sign up</h1>
-<p>Sign-up is only for the shop owner. If you work here, your admin creates your account under <strong>Account</strong>, then <strong>Add role users</strong>. Ask them for your email and password.</p>
+<p>Sign-up is only for the shop owner. <strong>If you are the owner and already signed up, just log in</strong> with the email and password you chose.</p>
+<p>If you work here, your admin creates your account under <strong>Account</strong>, then <strong>Add role users</strong>. Ask them for your email and password.</p>
 <p><a href="{{ url_for('login') }}">Back to log in</a></p>
 {% else %}
 <h1>{{ 'Create an admin account' if signup else 'Log in' }}</h1>
