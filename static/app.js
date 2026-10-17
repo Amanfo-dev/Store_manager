@@ -92,3 +92,13 @@ if (fab) {
   });
   render();
 }
+
+// A slow free server makes people click twice. Disable a form's buttons once it is sent.
+// Forms handled by JavaScript (like the add-to-cart pop-up) call preventDefault and are skipped.
+document.addEventListener("submit", e => {
+  if (e.defaultPrevented) return;
+  const buttons = e.target.querySelectorAll("button:not([type=button])");
+  setTimeout(() => buttons.forEach(b => { b.disabled = true; }), 0);
+});
+// Coming back with the Back button should not leave buttons stuck.
+window.addEventListener("pageshow", () => document.querySelectorAll("form button:disabled").forEach(b => { b.disabled = false; }));
