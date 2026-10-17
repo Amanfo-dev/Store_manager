@@ -1,6 +1,8 @@
 import calendar
 import json
+import math
 import os
+import re
 import secrets
 import urllib.error
 import urllib.request
@@ -193,7 +195,7 @@ class MailError(Exception):
 
 
 def send_email(to, subject, text):
-    """Send through Resend's HTTPS API (Railway's cheaper plans block SMTP).
+    """Send through Resend's HTTPS API (free hosts block SMTP).
     With no RESEND_API_KEY, local runs print the email to the terminal instead."""
     key = os.environ.get("RESEND_API_KEY")
     if not key:
@@ -241,7 +243,10 @@ CLOSED_MESSAGE = ("Sign-up is only for the shop owner. Staff accounts are create
 
 
 def owner_emails():
-    return {e.strip().lower() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()}
+    # Forgiving on purpose: addresses may be separated by commas, semicolons or spaces,
+    # and stray quotes or <angle brackets> around an address are ignored.
+    parts = re.split(r"[,;\s]+", os.environ.get("ADMIN_EMAIL", ""))
+    return {p.strip("\"'<>").lower() for p in parts if p.strip("\"'<>")}
 
 
 def signup_open():
@@ -269,7 +274,11 @@ def signup():
                 raise ValueError("The password must be at least 8 characters.")
             owners = owner_emails()
             if owners and clean not in owners:
-                raise ValueError("Only the owner's email address can create an admin account.")
+                # Visible only in the server logs, so the owner can see what ADMIN_EMAIL was read as.
+                app.logger.warning("Sign-up refused for %s. ADMIN_EMAIL currently allows: %s", clean, sorted(owners))
+                raise ValueError("Only the owner's email address can create an admin account. "
+                                 "Staff accounts are made by your admin under Account, then Add role users. "
+                                 "If you are the owner, check that the ADMIN_EMAIL setting on your host is exactly this email.")
             if not signup_open():
                 raise ValueError(CLOSED_MESSAGE)
             if User.query.filter_by(email=clean).first():
@@ -301,6 +310,12 @@ def signup_verify():
         return redirect(url_for("index"))
     pending = current_pending()
     if pending is None:
+        email = session.get("pending_email")
+        if email and User.query.filter_by(email=email).first():
+            # Usually a double click on Confirm: the first click already made the account.
+            session.pop("pending_email", None)
+            flash("Your account is already created. Log in with your email and password.", "success")
+            return redirect(url_for("login"))
         flash("Start the sign-up again.", "error")
         return redirect(url_for("signup"))
     if request.method == "POST":
@@ -422,7 +437,7 @@ def read_item_form():
         stock = int(request.form["stock"])
     except (KeyError, ValueError):
         raise ValueError("Price and stock must be numbers.")
-    if not name or price < 0 or stock < 0:
+    if not name or not math.isfinite(price) or price < 0 or stock < 0:
         raise ValueError("Enter a name, and a price and stock that are not negative.")
     return name, price, stock
 
@@ -505,7 +520,7 @@ def delete_item(item_id):
 def record_expense():
     description = request.form.get("description", "").strip()
     amount = request.form.get("amount", type=float)
-    if not description or amount is None or amount <= 0:
+    if not description or amount is None or not math.isfinite(amount) or amount <= 0:
         flash("Enter a description and an amount above 0.", "error")
     else:
         db.session.add(Expense(description=description, amount=amount))
@@ -531,7 +546,9 @@ def checkout():
     except (KeyError, TypeError, ValueError):
         return jsonify(error="Something is wrong with the cart. Refresh and try again."), 400
 
-    items = {i.id: i for i in Item.query.filter(Item.id.in_(list(wanted))).all()}
+    # with_for_update() locks these rows on Postgres until we commit, so two checkouts
+    # of the last unit can't both succeed. (SQLite ignores it; it writes one at a time.)
+    items = {i.id: i for i in Item.query.filter(Item.id.in_(list(wanted))).with_for_update().all()}
     for item_id, qty in wanted.items():
         item = items.get(item_id)
         if item is None:
