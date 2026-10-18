@@ -100,14 +100,18 @@ init_db()
 
 # ---------- auth and permissions ----------
 
-PUBLIC = {"login", "signup", "signup_verify", "signup_resend", "health", "static"}
+PUBLIC = {"login", "signup", "signup_verify", "signup_resend", "health", "favicon", "static"}
 
 
 @app.before_request
 def load_user():
     g.user = db.session.get(User, session["uid"]) if "uid" in session else None
-    if g.user is None and request.endpoint not in PUBLIC:
-        session.clear()
+    if "uid" in session and g.user is None:
+        session.pop("uid")  # the account was removed: forget the stale login, and nothing else
+    # request.endpoint is None for addresses that don't exist (browsers ask for /favicon.ico
+    # on their own). Those must get a plain 404 and must NOT touch the session, or the
+    # sign-up state kept in the cookie gets wiped while the owner waits for the emailed code.
+    if g.user is None and request.endpoint is not None and request.endpoint not in PUBLIC:
         return redirect(url_for("login", next=request.path))
 
 
@@ -403,6 +407,12 @@ def no_cache_for_signed_in_pages(resp):
     if g.get("user"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.get("/favicon.ico")
+def favicon():
+    # No icon file; answering "no content" stops browsers asking again and filling the logs with 404s.
+    return "", 204
 
 
 @app.get("/health")
